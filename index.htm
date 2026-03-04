@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>HDF5 Skeletal Animation Viewer (PoC)</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #a0a0a0;
+            color: white;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        #canvas-container {
+            width: 100vw;
+            height: 100vh;
+            display: block;
+        }
+
+        #stats-container {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            z-index: 10;
+        }
+
+        #status-overlay {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            z-index: 10;
+            background: rgba(0, 0, 0, 0.6);
+            padding: 10px 15px;
+            border-radius: 6px;
+            font-size: 14px;
+            pointer-events: none;
+            color: #ddd;
+            border: 1px solid #444;
+        }
+    </style>
+</head>
+
+<body>
+    <!-- lil-gui에서 호출할 숨겨진 File Input -->
+    <input type="file" id="file-input" accept=".h5,.hdf5" style="display: none;" />
+
+    <div id="status-overlay">Please load an HDF5 file</div>
+    <div id="stats-container"></div>
+    <div id="canvas-container"></div>
+
+    <script type="module" src="/src/main.js"></script>
+</body>
+
+</html>
