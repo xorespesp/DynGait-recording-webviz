@@ -339,15 +339,24 @@ function updateMeshVBOWithVerts(verts1DArray) {
     if (!baseGeometry) return;
     const positionAttr = baseGeometry.getAttribute('position');
 
+    let isLayoutChanged = false;
+
     // glBufferData (최초 할당 시) vs glBufferSubData (기존 버퍼 갱신 시)
     if (positionAttr.array.length !== verts1DArray.length) {
         baseGeometry.setAttribute('position', new THREE.BufferAttribute(verts1DArray, 3));
+        isLayoutChanged = true;
     } else {
         positionAttr.array.set(verts1DArray);
         positionAttr.needsUpdate = true;
     }
 
     baseGeometry.computeVertexNormals();
+
+    // VBO 최초 할당(또는 크기 변경) 시 normal attribute가 새로 추가되므로, 
+    // 이에 맞춰 머티리얼 셰이더가 올바르게 flat shading 등을 적용받도록 재컴파일 트리거
+    if (isLayoutChanged && skelMesh) {
+        skelMesh.material.needsUpdate = true;
+    }
 }
 
 // 애플리케이션 스타트
