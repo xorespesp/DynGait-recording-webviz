@@ -103,15 +103,14 @@ self.onmessage = async (e) => {
             const mountDir = "/work";
             const vFileName = `${mountDir}/${file.name}`;
 
-            // 기존 디렉토리나 마운트가 꼬이지 않도록 정리
+            // 기존 파일 핸들을 먼저 닫고 FS를 정리한 뒤 새로 마운트
+            if (g_h5File) { g_h5File.close(); g_h5File = null; }
             try { h5wasm.FS.unmount(mountDir); } catch (err) { }
             try { h5wasm.FS.mkdir(mountDir); } catch (err) { }
 
             // [핵심] WORKERFS는 오직 Web Worker 쓰레드 내부에서만 사용 가능합니다!
             // 브라우저의 File 객체를 C/C++ 파일시스템으로 제로-카피(Zero-Copy) 직결시킵니다.
             h5wasm.FS.mount(h5wasm.FS.filesystems.WORKERFS, { files: [file] }, mountDir);
-
-            if (g_h5File) g_h5File.close();
             g_h5File = new h5wasm.File(vFileName, 'r');
 
             // ---- 정적 데이터(Static Data) 추출 ----
@@ -170,7 +169,10 @@ self.onmessage = async (e) => {
     else if (type === 'GET_FRAME') {
         const frameIndex = payload;
 
-        if (!g_h5File || frameIndex >= g_framesKeys.length) return;
+        if (!g_h5File || frameIndex >= g_framesKeys.length) {
+            self.postMessage({ type: 'FRAME_DATA', payload: { frameIndex, verts: null } });
+            return;
+        }
 
         try {
             const frameKey = g_framesKeys[frameIndex];
