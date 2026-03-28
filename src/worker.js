@@ -2,16 +2,16 @@ import * as h5wasm from 'h5wasm';
 
 // HDF5 가상 환경을 담당할 Web Worker
 // 메인 UI 쓰레드와 분리되어 대용량 파일을 백그라운드에서 읽어들입니다.
-let h5File = null;
-let framesKeys = [];
-let targetBodyId = "00";
+let g_h5File = null;
+let g_framesKeys = [];
+let g_targetBodyId = "00";
 
 // LBS 정적 데이터 (파일 로드 시 1회 적재, 매 프레임 재사용)
-let tposeVerts = null;              // Float32Array (V*3), T-pose world vertices
-let lbsWeights = null;              // Float32Array (V*J), soft LBS weights (row-major)
-let numVerts = 0;                   // V (vertex count)
-let numJoints = 0;                  // J (joint count)
-let worldOffsetTransform = null;    // Float32Array(16), optional 4x4 column-major offset matrix
+let g_tposeVerts = null;              // Float32Array (V*3), T-pose world vertices
+let g_lbsWeights = null;              // Float32Array (V*J), soft LBS weights (row-major)
+let g_numVerts = 0;                   // V (vertex count)
+let g_numJoints = 0;                  // J (joint count)
+let g_worldOffsetTransform = null;    // Float32Array(16), optional 4x4 column-major offset matrix
 
 // ==========================================
 // LBS Helper Functions
@@ -111,54 +111,54 @@ self.onmessage = async (e) => {
             // 브라우저의 File 객체를 C/C++ 파일시스템으로 제로-카피(Zero-Copy) 직결시킵니다.
             h5wasm.FS.mount(h5wasm.FS.filesystems.WORKERFS, { files: [file] }, mountDir);
 
-            if (h5File) h5File.close();
-            h5File = new h5wasm.File(vFileName, 'r');
+            if (g_h5File) g_h5File.close();
+            g_h5File = new h5wasm.File(vFileName, 'r');
 
             // ---- 정적 데이터(Static Data) 추출 ----
 
             // Skel template faces (v1.5: 경로 변경 static/skel_mesh_faces → static/skel_template/faces)
-            const facesDataset = h5File.get('static/skel_template/faces');
+            const facesDataset = g_h5File.get('static/skel_template/faces');
             if (!facesDataset) throw new Error('Missing /static/skel_template/faces dataset.');
             const facesArr = new Int32Array(facesDataset.value);
 
             // Skel template T-pose vertices (v1.5 신규: body별 정적 T-pose world verts)
-            const tposeDataset = h5File.get(`static/skel_template/bodies/${targetBodyId}/tpose_verts`);
+            const tposeDataset = g_h5File.get(`static/skel_template/bodies/${g_targetBodyId}/tpose_verts`);
             if (!tposeDataset) throw new Error('Missing tpose_verts dataset.');
-            tposeVerts = new Float32Array(tposeDataset.value);
+            g_tposeVerts = new Float32Array(tposeDataset.value);
             // shape이 2D (V,3)이면 shape[0]=V, 1D (V*3)이면 shape[0]/3
-            numVerts = tposeDataset.shape.length >= 2 ? tposeDataset.shape[0] : tposeDataset.shape[0] / 3;
+            g_numVerts = tposeDataset.shape.length >= 2 ? tposeDataset.shape[0] : tposeDataset.shape[0] / 3;
 
             // Skel template LBS weights (v1.5 신규: soft per-vertex bone weights)
-            const lbsDataset = h5File.get('static/skel_template/lbs_weights');
+            const lbsDataset = g_h5File.get('static/skel_template/lbs_weights');
             if (!lbsDataset) throw new Error('Missing lbs_weights dataset.');
-            lbsWeights = new Float32Array(lbsDataset.value);
+            g_lbsWeights = new Float32Array(lbsDataset.value);
             // shape이 2D (V,J)이면 shape[1]=J, 1D (V*J)이면 total/V
-            numJoints = lbsDataset.shape.length >= 2 ? lbsDataset.shape[1] : lbsWeights.length / numVerts;
+            g_numJoints = lbsDataset.shape.length >= 2 ? lbsDataset.shape[1] : g_lbsWeights.length / g_numVerts;
 
             // World offset transform (optional 4x4 column-major 변환 행렬)
             // h5wasm get()이 존재하지 않는 경로에서 throw할 수 있으므로,
             // static 그룹의 keys()로 존재 여부를 먼저 확인
-            worldOffsetTransform = null;
+            g_worldOffsetTransform = null;
             {
-                const staticGroup = h5File.get('static');
+                const staticGroup = g_h5File.get('static');
                 const staticKeys = staticGroup ? staticGroup.keys() : [];
                 if (staticGroup && staticKeys.includes('world_offset_transform')) {
                     const offsetDataset = staticGroup.get('world_offset_transform');
-                    worldOffsetTransform = new Float32Array(offsetDataset.value);
+                    g_worldOffsetTransform = new Float32Array(offsetDataset.value);
                 }
             }
 
             // Frame keys
-            const framesGroup = h5File.get('frames');
+            const framesGroup = g_h5File.get('frames');
             if (!framesGroup) throw new Error('Missing /frames group.');
-            framesKeys = framesGroup.keys().sort();
+            g_framesKeys = framesGroup.keys().sort();
 
             // 메인 쓰레드로 정적 구성요소 응답 (Zero-Copy Transfer)
             self.postMessage({
                 type: 'FILE_LOADED',
                 payload: {
                     faces: facesArr,
-                    numFrames: framesKeys.length,
+                    numFrames: g_framesKeys.length,
                 }
             }, [facesArr.buffer]);
 
@@ -170,14 +170,14 @@ self.onmessage = async (e) => {
     else if (type === 'GET_FRAME') {
         const frameIndex = payload;
 
-        if (!h5File || frameIndex >= framesKeys.length) return;
+        if (!g_h5File || frameIndex >= g_framesKeys.length) return;
 
         try {
-            const frameKey = framesKeys[frameIndex];
+            const frameKey = g_framesKeys[frameIndex];
 
             // Per-frame bone transforms 읽기 (v1.5: skel_mesh_verts 대신 skel_bone_transforms)
-            const transformsPath = `frames/${frameKey}/bodies/${targetBodyId}/skel_model_output/skel_bone_transforms`;
-            const transformsDataset = h5File.get(transformsPath);
+            const transformsPath = `frames/${frameKey}/bodies/${g_targetBodyId}/skel_model_output/skel_bone_transforms`;
+            const transformsDataset = g_h5File.get(transformsPath);
 
             if (transformsDataset) {
                 const boneTransforms = new Float32Array(transformsDataset.value); // Copy to avoid WASM heap invalidation
@@ -185,18 +185,18 @@ self.onmessage = async (e) => {
                 // world_offset_transform이 있으면 bone transforms에 pre-multiply
                 // G'[j] = M_offset * G[j] — V회 vertex 변환 대신 J회 행렬곱으로 효율적 적용
                 let effectiveTransforms;
-                if (worldOffsetTransform) {
-                    effectiveTransforms = new Float32Array(numJoints * 16);
-                    for (let j = 0; j < numJoints; j++) {
-                        mulMat4ColMajor(worldOffsetTransform, 0, boneTransforms, j * 16, effectiveTransforms, j * 16);
+                if (g_worldOffsetTransform) {
+                    effectiveTransforms = new Float32Array(g_numJoints * 16);
+                    for (let j = 0; j < g_numJoints; j++) {
+                        mulMat4ColMajor(g_worldOffsetTransform, 0, boneTransforms, j * 16, effectiveTransforms, j * 16);
                     }
                 } else {
                     effectiveTransforms = boneTransforms;
                 }
 
                 // LBS 재구성: v'_i = Σ_j W[i,j] * G[j] * [v_tpose_i; 1]
-                const resultVerts = new Float32Array(numVerts * 3);
-                performLBS(tposeVerts, lbsWeights, effectiveTransforms, numVerts, numJoints, resultVerts);
+                const resultVerts = new Float32Array(g_numVerts * 3);
+                performLBS(g_tposeVerts, g_lbsWeights, effectiveTransforms, g_numVerts, g_numJoints, resultVerts);
 
                 self.postMessage({
                     type: 'FRAME_DATA',
